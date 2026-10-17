@@ -1,5 +1,5 @@
 'use strict';
-// Detention! — LAN multiplayer school game server.
+// SchoolSim — LAN multiplayer school game server.
 // Serves the client from ./public and runs the authoritative game simulation over WebSockets.
 
 const http = require('http');
@@ -121,7 +121,9 @@ const LINES = {
     { cat: 'Discipline', id: 'shush', text: 'Shhh! Quiet down!', cd: 12, hint: 'stops mischief near you' },
     { cat: 'Discipline', id: 'eyes', text: 'Eyes up here, everyone!', cd: 25, hint: 'whole class settles down' },
     { cat: 'Discipline', id: 'phone', text: '{name}, put that phone away!', target: true, cd: 3, hint: 'confiscate a phone' },
-    { cat: 'Discipline', id: 'detention', text: '{name}! Detention!', target: true, cd: 1, hint: 'must be misbehaving in view' },
+    { cat: 'Discipline', id: 'detention', text: '{name}! Detention!', target: true, cd: 1, hint: '12 s in the corner — punishing an innocent kid upsets the class' },
+    { cat: 'Discipline', id: 'office', text: '{name}, principal\'s office. NOW!', target: true, cd: 20, hint: 'out of the room for 25 s, −15 mischief' },
+    { cat: 'Discipline', id: 'release', text: '{name}, you can go back to your seat.', target: true, cd: 2, hint: 'let a kid out of detention early' },
     { cat: 'Praise', id: 'praise', text: 'Great work, everyone!', cd: 30, hint: '+order, +grades for good kids' },
     { cat: 'Praise', id: 'star', text: 'Gold star for {name}!', target: true, cd: 10, hint: '+5 grade' },
     { cat: 'Praise', id: 'homework', text: 'Homework tonight: page 42!', cd: 45, hint: '+order, but they groan' },
@@ -255,21 +257,25 @@ function settle(s) {
   s.misbehaveT = 0;
 }
 
-function sendToDetention(s) {
-  const k = game.students.filter(o => o.detentionT > 0).length;
-  s.detentionT = 12; s.action = null; s.misbehaveT = 0; s.caught++; s.hand = false; s.passT = 0; s.request = null;
-  s.mischief = Math.max(0, s.mischief - 10);
-  s.x = DETENTION.x + 22 + (k % 4) * 26; s.y = DETENTION.y + 30 + Math.floor(k / 4) * 30;
+function sendToDetention(s, office = false) {
+  const k = game.students.filter(o => o.detentionT > 0 && !o.office).length;
+  s.detentionT = office ? 25 : 12; s.office = office; s.action = null; s.misbehaveT = 0; s.caught++; s.hand = false; s.passT = 0; s.request = null;
+  s.mischief = Math.max(0, s.mischief - (office ? 15 : 10));
+  if (office) { s.x = W + 80; s.y = DOOR.y; } // out of the room
+  else { s.x = DETENTION.x + 22 + (k % 4) * 26; s.y = DETENTION.y + 30 + Math.floor(k / 4) * 30; }
   s.angle = Math.PI;
   if (!s.playerId) say(s, pick(['Aw man!', 'Not fair!', 'Ugh…', 'It wasn\'t me!']));
 }
 
-function doCatch(t, s) {
-  sendToDetention(s);
-  t.catches++; t.score += 10; t.catchCd = 0.8;
-  game.order = Math.min(100, game.order + 8);
-  if (!t.playerId) say(t, `${s.name}! Detention!`);
-  emit(`${s.name}! DETENTION!`, s.x + 60, s.y - 30, '#ff6b6b');
+function doCatch(t, s, office = false) {
+  // Repeat offenders get sent to the principal by the NPC teacher
+  if (!t.playerId && s.caught >= 2 && Math.random() < 0.4) office = true;
+  const x = s.x, y = s.y;
+  sendToDetention(s, office);
+  t.catches++; t.score += office ? 15 : 10; t.catchCd = 0.8;
+  game.order = Math.min(100, game.order + (office ? 12 : 8));
+  if (!t.playerId) say(t, office ? `${s.name}, principal's office. NOW!` : `${s.name}! Detention!`);
+  emit(office ? `${s.name} → PRINCIPAL'S OFFICE!` : `${s.name}! DETENTION!`, x, y - 30, '#ff6b6b');
 }
 
 function teacherCatch(t) {
@@ -392,8 +398,8 @@ function speak(e, role, id, targetId) {
   if ((e.cds[id] || 0) > 0) return tell(p, `Wait ${Math.ceil(e.cds[id])}s before saying that again.`);
   if ((e.cds._any || 0) > 0) return tell(p, 'Not so fast!');
   const t = game.teacher;
-  let target = targetId ? game.students.find(s => s.id === targetId && s.detentionT <= 0) : null;
-  if (line.target && !target) return tell(p, 'Point your mouse at a student first.');
+  let target = targetId ? game.students.find(s => s.id === targetId && (id === 'release' ? s.detentionT > 0 && !s.office : s.detentionT <= 0)) : null;
+  if (line.target && !target) return tell(p, id === 'release' ? 'Point at a kid in detention first.' : 'Point your mouse at a student first.');
   if (phase === 'recess' && role === 'teacher' && !id.startsWith('topic_')) { say(e, line.text.replace('{name}', target ? target.name : '')); return; }
 
   if (role === 'teacher') {
@@ -429,10 +435,23 @@ function speak(e, role, id, targetId) {
         if (!target.playerId) say(target, 'Sorry…');
         emit('Phone confiscated!', target.x, target.y - 30, '#ffa94d');
       } else { wrongAccusation(t); if (!target.playerId) say(target, 'What phone?!'); }
-    } else if (id === 'detention') {
+    } else if (id === 'detention' || id === 'office') {
       if (t.catchCd > 0) return;
-      if (isMisbehaving(target) && canSee(t, target)) doCatch(t, target);
-      else { wrongAccusation(t); if (!target.playerId) say(target, 'I didn\'t do anything!'); }
+      const office = id === 'office', guilty = isMisbehaving(target);
+      if (guilty) doCatch(t, target, office);
+      else {
+        // The teacher can punish anyone, but the class notices when it's unfair
+        sendToDetention(target, office);
+        t.catchCd = 2;
+        game.order = Math.max(0, game.order - (office ? 10 : 6));
+        if (!target.playerId) say(target, 'What?! I didn\'t do anything!');
+        chorus(['Not fair!', 'He didn\'t do anything!', 'Unfair!'], 2);
+        emit(`Unfair ${office ? 'office trip' : 'detention'}! (-order)`, target.x + 60, target.y - 30, '#ffa94d');
+      }
+    } else if (id === 'release') {
+      target.detentionT = 0.01;
+      game.order = Math.min(100, game.order + 1);
+      if (!target.playerId) setTimeout(() => say(target, 'Thanks!'), 400);
     } else if (id === 'praise') {
       game.order = Math.min(100, game.order + 4);
       for (const s of activeStudents()) if (!isMisbehaving(s)) s.grade += 2;
@@ -650,7 +669,7 @@ function updateStudent(s, t) {
   if (s.detentionT > 0) {
     s.detentionT -= DT;
     if (s.detentionT <= 0) {
-      const d = DESKS[s.desk]; s.x = d.seatX; s.y = d.seatY; s.angle = -Math.PI / 2;
+      const d = DESKS[s.desk]; s.x = d.seatX; s.y = d.seatY; s.angle = -Math.PI / 2; s.office = false;
       emit(`${s.name} is back`, s.x, s.y - 30, '#aaa');
     }
     return;
@@ -842,7 +861,7 @@ function serializeEntity(e) {
   if (e.playerId) o.cds = Object.fromEntries(Object.entries(e.cds).filter(([, v]) => v > 0).map(([k, v]) => [k, Math.ceil(v)]));
   if (e.kind === 'teacher') Object.assign(o, { teaching: e.teaching, catches: e.catches, score: Math.round(e.score) });
   else Object.assign(o, {
-    act: e.action, mis: isMisbehaving(e), det: e.detentionT > 0 ? Math.ceil(e.detentionT) : 0,
+    act: e.action, mis: isMisbehaving(e), det: e.detentionT > 0 ? Math.ceil(e.detentionT) : 0, office: !!e.office,
     hand: e.hand, pass: e.passT > 0 ? Math.ceil(e.passT) : 0, req: e.request ? e.request.kind : null,
     grade: Math.round(e.grade), mischief: Math.round(e.mischief), caught: e.caught, score: Math.round(e.grade + e.mischief),
   });
@@ -999,7 +1018,7 @@ wss.on('connection', ws => {
 
 setInterval(tick, 1000 / TICK_HZ);
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n  Detention! server running on port ${PORT}\n`);
+  console.log(`\n  SchoolSim server running on port ${PORT}\n`);
   console.log(`  On this computer:   http://localhost:${PORT}`);
   for (const u of lanUrls()) console.log(`  Friends on your LAN: ${u}`);
   console.log(`\n  Up to ${MAX_PLAYERS} players. NPCs fill the rest of the class.\n`);

@@ -1,7 +1,7 @@
 {
-  "name": "detention-lan-game",
+  "name": "schoolsim",
   "version": "1.0.0",
-  "description": "Detention! — a LAN multiplayer school game. Be the teacher or a student; NPCs fill the rest of the class.",
+  "description": "SchoolSim — a LAN multiplayer school game. Be the teacher or a student; NPCs fill the rest of the class.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

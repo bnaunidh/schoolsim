@@ -1,4 +1,4 @@
-# Detention!
+# SchoolSim
 
 A LAN multiplayer school game for up to **3 players**. Everybody else in the classroom is an NPC.
 
@@ -21,7 +21,9 @@ Both roles have a **dialogue menu**. Press `T`, pick a type of dialogue, then pi
 | ❓ **Ask** — "{name}, can you answer this?" | Calls on the student you're pointing at (or **right-click** them). Calling on someone who's goofing off catches them off guard. |
 | ❓ **Ask** — "Yes, {name}? Your hand is up." | Calls on someone with their hand up. |
 | ❓ **Ask** — "Pop quiz! Pencils out!" | The whole class answers (also `Q`). |
-| 📢 **Discipline** — "Shhh!", "Eyes up here!", "Put that phone away!", "Detention!" | Settles the kids near you or the whole class, takes a phone, or gives detention. |
+| 📢 **Discipline** — "Shhh!", "Eyes up here!", "Put that phone away!" | Settles the kids near you or the whole class, or takes a phone. |
+| 📢 **Discipline** — "{name}! Detention!" / "Principal's office. NOW!" | Sends the kid you point at to detention (12 s) or the principal's office (25 s, out of the room). You can punish **anyone**, but if they weren't misbehaving the class protests and order drops. |
+| 📢 **Discipline** — "{name}, you can go back to your seat." | Lets a kid out of detention early. |
 | ⭐ **Praise** — "Great work, everyone!", "Gold star for {name}!", "Homework tonight!" | Raises order and grades. |
 
 | Student dialogue | What it does |

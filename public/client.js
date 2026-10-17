@@ -1,5 +1,5 @@
 'use strict';
-// Detention! — browser client. Renders server snapshots and sends input.
+// SchoolSim — browser client. Renders server snapshots and sends input.
 
 const W = 960, H = 640, WALL = 24;
 const COLS = [200, 370, 590, 760], ROWS = [260, 380, 500];
@@ -40,12 +40,12 @@ const send = m => ws && ws.readyState === 1 && ws.send(JSON.stringify(m));
 
 $('joinBtn').onclick = () => {
   const name = $('name').value.trim() || 'Player';
-  try { localStorage.setItem('detention-name', name); } catch {}
+  try { localStorage.setItem('schoolsim-name', name); } catch {}
   $('joinMsg').textContent = '';
   connect(name);
 };
 $('name').addEventListener('keydown', e => { if (e.key === 'Enter') $('joinBtn').click(); });
-try { $('name').value = localStorage.getItem('detention-name') || ''; } catch {}
+try { $('name').value = localStorage.getItem('schoolsim-name') || ''; } catch {}
 
 document.querySelectorAll('#roleBtns button').forEach(b => b.onclick = () => send({ t: 'role', role: b.dataset.role }));
 $('startBtn').onclick = () => send({ t: 'start' });
@@ -126,7 +126,7 @@ function renderHud() {
     $('help').textContent = 'WASD move · Mouse look · T: talk (topics, questions, discipline, praise) · Right-click a student: call on them · SPACE / click: catch · E at board: teach · Y/N: answer requests';
   } else {
     const s = m.e;
-    $('hudRight').textContent = s.det ? `⛓ DETENTION ${s.det}s` : `🎒 ${s.name} · Grade ${s.grade} · Mischief ${s.mischief} · Score ${s.score}`;
+    $('hudRight').textContent = s.det ? (s.office ? `🏫 PRINCIPAL'S OFFICE ${s.det}s` : `⛓ DETENTION ${s.det}s`) : `🎒 ${s.name} · Grade ${s.grade} · Mischief ${s.mischief} · Score ${s.score}`;
     $('help').textContent = 'WASD move · T: talk · H: raise hand · 1–4: answer · Hold F: phone · N: note · Click: throw paper ball · E: sit — stay out of the yellow cone when you misbehave!';
   }
 }
@@ -442,16 +442,22 @@ function frame(now) {
     teacherTarget = null;
     if (m0 && m0.role === 'teacher') {
       let best = 70;
-      for (const s of g.students) { if (s.det) continue; const p = smooth.get(s.id), d = Math.hypot(p.x - mouse.x, p.y - mouse.y); if (d < best) { best = d; teacherTarget = s.id; } }
+      for (const s of g.students) { if (s.office) continue; const p = smooth.get(s.id), d = Math.hypot(p.x - mouse.x, p.y - mouse.y); if (d < best) { best = d; teacherTarget = s.id; } }
       if (teacherTarget) { const p = smooth.get(teacherTarget); ctx.strokeStyle = '#ff922b'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.arc(p.x, p.y, 24, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
     }
     if (g.ask && g.ask.called) {
       const p = smooth.get(g.ask.called);
       if (p) { ctx.fillStyle = 'rgba(255,255,200,.35)'; ctx.beginPath(); ctx.arc(p.x, p.y, 32, 0, 7); ctx.fill(); }
     }
-    for (const s of g.students) drawPerson(s, smooth.get(s.id), false);
+    for (const s of g.students) if (!s.office) drawPerson(s, smooth.get(s.id), false);
     drawPerson(g.teacher, smooth.get('T'), true);
-    for (const e of ents) drawBubble(e, smooth.get(e.id));
+    for (const e of ents) if (!e.office) drawBubble(e, smooth.get(e.id));
+    const inOffice = g.students.filter(s => s.office);
+    if (inOffice.length) {
+      ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'right'; ctx.fillStyle = '#fff';
+      ctx.fillText(`🏫 Principal's office: ${inOffice.map(s => `${s.name} (${s.det}s)`).join(', ')}`, W - WALL - 4, H - 6);
+      ctx.textAlign = 'center';
+    }
     for (const b of g.balls) { ctx.fillStyle = '#f8f9fa'; ctx.strokeStyle = '#adb5bd'; ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, 7); ctx.fill(); ctx.stroke(); }
     // aim line for students
     const m = me();
