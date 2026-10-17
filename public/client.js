@@ -12,7 +12,8 @@ const VIEW_RANGE = 300, VIEW_HALF = Math.PI * 0.3;
 const $ = id => document.getElementById(id);
 const canvas = $('c'), ctx = canvas.getContext('2d');
 
-let ws = null, myId = null, state = null, lanUrls = [];
+let ws = null, myId = null, state = null, lanUrls = [], lines = null;
+let talkOpen = false, talkCat = null, teacherTarget = null;
 const smooth = new Map(); // entity id -> displayed {x,y}
 const floaters = [];
 const keys = {};
@@ -25,7 +26,7 @@ function connect(name) {
   ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name }));
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
-    if (m.t === 'welcome') { myId = m.id; lanUrls = m.urls || []; }
+    if (m.t === 'welcome') { myId = m.id; lanUrls = m.urls || []; lines = m.lines; }
     else if (m.t === 'full') { $('joinMsg').textContent = 'The class is full (3 players max).'; myId = null; }
     else if (m.t === 'toast') toast(m.text);
     else if (m.t === 'state') onState(m);
@@ -60,7 +61,8 @@ function showScreen(which) {
   const inGame = which === 'game';
   $('hud').classList.toggle('hidden', !inGame);
   $('help').classList.toggle('hidden', !inGame);
-  if (!inGame) { $('quiz').classList.add('hidden'); $('banner').classList.add('hidden'); }
+  $('talkBtn').classList.toggle('hidden', !inGame);
+  if (!inGame) { for (const id of ['quiz', 'banner', 'ask', 'requests', 'talk']) $(id).classList.add('hidden'); talkOpen = false; }
 }
 
 // ---- State handling -----------------------------------------------------
@@ -81,6 +83,9 @@ function onState(m) {
   renderHud();
   renderQuiz();
   renderBanner();
+  renderAsk();
+  renderRequests();
+  renderTalk();
 }
 
 function renderLobby() {
@@ -118,11 +123,11 @@ function renderHud() {
   if (!m) { $('hudRight').textContent = 'Spectating'; return; }
   if (m.role === 'teacher') {
     $('hudRight').textContent = `🍎 ${m.e.name} · Score ${m.e.score} · Catches ${m.e.catches}${g.quizCd > 0 ? ` · Quiz in ${g.quizCd}s` : ' · Quiz ready (Q)'}`;
-    $('help').textContent = 'WASD move · Mouse look · SPACE / click: catch a misbehaving student in your yellow cone · E at the blackboard: teach (you face the board!) · Q: pop quiz';
+    $('help').textContent = 'WASD move · Mouse look · T: talk (topics, questions, discipline, praise) · Right-click a student: call on them · SPACE / click: catch · E at board: teach · Y/N: answer requests';
   } else {
     const s = m.e;
     $('hudRight').textContent = s.det ? `⛓ DETENTION ${s.det}s` : `🎒 ${s.name} · Grade ${s.grade} · Mischief ${s.mischief} · Score ${s.score}`;
-    $('help').textContent = 'WASD move · Hold F: phone · N: pass a note · Click: throw paper ball · E: sit · 1–4: quiz answers — stay out of the teacher\'s yellow cone when you misbehave!';
+    $('help').textContent = 'WASD move · T: talk · H: raise hand · 1–4: answer · Hold F: phone · N: note · Click: throw paper ball · E: sit — stay out of the yellow cone when you misbehave!';
   }
 }
 
@@ -177,16 +182,96 @@ addEventListener('keydown', e => {
   if (KEYMAP[e.code]) { keys[KEYMAP[e.code]] = true; e.preventDefault(); }
   if (e.repeat) return;
   const m = me(); if (!m) return;
+  if (e.code === 'KeyT') { talkOpen = !talkOpen; talkCat = null; renderTalk(true); return; }
+  if (talkOpen && (e.code === 'Escape' || e.code === 'Backspace')) { if (talkCat) talkCat = null; else talkOpen = false; renderTalk(true); e.preventDefault(); return; }
+  if (talkOpen && /^Digit[1-9]$/.test(e.code)) { talkPick(+e.code.slice(5) - 1); return; }
   if (m.role === 'teacher') {
     if (e.code === 'Space') { send({ t: 'act', a: 'catch' }); e.preventDefault(); }
     if (e.code === 'KeyE') send({ t: 'act', a: 'teach' });
-    if (e.code === 'KeyQ') send({ t: 'act', a: 'quiz' });
+    if (e.code === 'KeyQ') sayLine('quiz');
+    if (e.code === 'KeyY' || e.code === 'KeyN') { const r = state.game.students.find(s => s.req); if (r) send({ t: 'act', a: 'reply', sid: r.id, yes: e.code === 'KeyY' }); }
   } else {
     if (e.code === 'KeyN') send({ t: 'act', a: 'note' });
     if (e.code === 'KeyE') send({ t: 'act', a: 'sit' });
+    if (e.code === 'KeyH') sayLine('hand');
     if (/^Digit[1-4]$/.test(e.code)) send({ t: 'act', a: 'answer', i: +e.code.slice(5) - 1 });
   }
 });
+
+// ---- Dialogue menu ------------------------------------------------------
+function myLines() { const m = me(); return m && lines ? lines[m.role] : []; }
+function sayLine(id) { send({ t: 'say', id, target: teacherTarget }); }
+function talkItems() {
+  const ls = myLines();
+  if (!talkCat) return [...new Set(ls.map(l => l.cat))].map(c => ({ cat: c }));
+  return ls.filter(l => l.cat === talkCat);
+}
+function talkPick(i) {
+  const it = talkItems()[i]; if (!it) return;
+  if (!talkCat) { talkCat = it.cat; renderTalk(true); return; }
+  sayLine(it.id); talkOpen = false; renderTalk(true);
+}
+const CAT_ICON = { Topic: '📚', Ask: '❓', Discipline: '📢', Praise: '⭐', Class: '✋', Requests: '🙋', Mischief: '😈', Nice: '😇' };
+let talkKey = '';
+function renderTalk(force) {
+  const el = $('talk'), m = me();
+  if (!talkOpen || !m || !state || state.phase === 'over') { el.classList.add('hidden'); talkKey = ''; return; }
+  const tgt = teacherTarget && state.game.students.find(s => s.id === teacherTarget);
+  const cds = m.e.cds || {};
+  const key = [talkCat, tgt && tgt.id, JSON.stringify(cds), state.game.topic].join('|');
+  if (!force && key === talkKey) return;
+  talkKey = key;
+  el.classList.remove('hidden');
+  const items = talkItems();
+  el.innerHTML = `<h4><span>${talkCat ? CAT_ICON[talkCat] + ' ' + talkCat : '💬 What do you want to say?'}</span><span>${talkCat ? 'Esc: back' : 'Esc: close'}</span></h4>` +
+    items.map((it, i) => {
+      if (!talkCat) return `<button data-i="${i}"><span class="k">${i + 1}</span>${CAT_ICON[it.cat] || ''} ${esc(it.cat)}</button>`;
+      const text = (it.label || it.text).replace('{name}', tgt ? tgt.name : '‹pointed student›').replace('{teacher}', state.game.teacher.name);
+      const cd = cds[it.id];
+      const current = it.id === 'topic_' + state.game.topic ? ' ✓' : '';
+      return `<button data-i="${i}" ${cd ? 'disabled' : ''}><span class="k">${i + 1}</span>“${esc(text)}”${current}${cd ? ` (${cd}s)` : ''}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</button>`;
+    }).join('');
+  el.querySelectorAll('button').forEach(b => b.onclick = () => talkPick(+b.dataset.i));
+}
+$('talkBtn').onclick = () => { talkOpen = !talkOpen; talkCat = null; renderTalk(true); };
+
+let askKey = '';
+function renderAsk() {
+  const a = state.game.ask, el = $('ask'), m = me();
+  if (!a || state.phase !== 'class') { el.classList.add('hidden'); askKey = ''; return; }
+  const g = state.game, called = a.called && g.students.find(s => s.id === a.called);
+  const hands = g.students.filter(s => s.hand).length;
+  const mine = m && m.role === 'student' && a.called === m.e.id;
+  const key = [a.q, a.phase, a.t, a.called, a.pick, hands, m && m.e.hand].join('|');
+  if (key === askKey) return;
+  askKey = key;
+  el.classList.remove('hidden');
+  let meta = '';
+  if (a.phase === 'hands') meta = m && m.role === 'teacher'
+    ? `✋ ${hands} hand(s) up · right-click a student to call on them (${a.t}s)`
+    : `✋ ${hands} hand(s) up · ${m && m.e.hand ? 'your hand is up!' : 'press H to raise your hand'} (${a.t}s)`;
+  else if (a.phase === 'answer') meta = mine ? `<b>You've been called on!</b> Pick an answer (${a.t}s)` : `${esc(called ? called.name : '?')} is answering… (${a.t}s)`;
+  else meta = a.pick === a.answer ? `✅ ${esc(called ? called.name : '')} got it right!` : a.pick === -2 ? `🤷 ${esc(called ? called.name : '')} didn't know.` : `❌ ${esc(called ? called.name : '')} got it wrong.`;
+  el.innerHTML = `<h3>${esc(g.teacher.name)} asks (${esc(g.topicName || '')})</h3><div class="q">${esc(a.q)}</div><div class="opts">${a.options.map((o, i) => {
+    const cls = a.phase === 'result' ? (i === a.answer ? 'right' : i === a.pick ? 'wrong' : '') : '';
+    return `<button data-i="${i}" class="${cls}" ${mine && a.phase === 'answer' ? '' : 'disabled'}>${i + 1}. ${esc(o)}</button>`;
+  }).join('')}</div>${mine && a.phase === 'answer' ? '<button class="idk">🤷 I don\'t know…</button>' : ''}<div class="meta">${meta}</div>`;
+  el.querySelectorAll('.opts button').forEach(b => b.onclick = () => send({ t: 'act', a: 'answer', i: +b.dataset.i }));
+  const idk = el.querySelector('.idk'); if (idk) idk.onclick = () => sayLine('idk');
+}
+
+let reqKey = '';
+const REQ_TEXT = { bathroom: 'Can I go to the bathroom?', water: 'Can I get some water?', nurse: 'Can I see the nurse?' };
+function renderRequests() {
+  const m = me(), el = $('requests');
+  const reqs = m && m.role === 'teacher' && state.phase === 'class' ? state.game.students.filter(s => s.req) : [];
+  const key = reqs.map(s => s.id + s.req).join();
+  if (key === reqKey) return;
+  reqKey = key;
+  el.classList.toggle('hidden', !reqs.length);
+  el.innerHTML = reqs.map((s, i) => `<div class="req">🙋 <b>${esc(s.name)}</b>: “${REQ_TEXT[s.req]}”<br><button class="yes" data-id="${s.id}" data-y="1">Yes${i ? '' : ' (Y)'}</button><button class="no" data-id="${s.id}">No${i ? '' : ' (N)'}</button></div>`).join('');
+  el.querySelectorAll('button').forEach(b => b.onclick = () => send({ t: 'act', a: 'reply', sid: b.dataset.id, yes: !!b.dataset.y }));
+}
 addEventListener('keyup', e => { if (KEYMAP[e.code]) keys[KEYMAP[e.code]] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 canvas.addEventListener('mousemove', e => { mouse = toWorld(e.clientX, e.clientY); });
@@ -194,8 +279,10 @@ canvas.addEventListener('mousedown', e => {
   if (!state || state.phase !== 'class') return;
   mouse = toWorld(e.clientX, e.clientY);
   const m = me(); if (!m) return;
-  if (m.role === 'teacher') send({ t: 'act', a: 'catch' });
-  else send({ t: 'act', a: 'throw', aim: aimFrom(m.e) });
+  if (m.role === 'teacher') {
+    if (e.button === 2) { if (teacherTarget) send({ t: 'say', id: 'call', target: teacherTarget }); }
+    else send({ t: 'act', a: 'catch' });
+  } else if (e.button === 0) send({ t: 'act', a: 'throw', aim: aimFrom(m.e) });
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -237,7 +324,9 @@ function drawRoom() {
   ctx.fillStyle = '#7a5230'; ctx.fillRect(292, 2, 376, 40);
   ctx.fillStyle = t.teaching ? '#2f6b45' : '#264d36'; ctx.fillRect(298, 6, 364, 30);
   ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = '15px "Comic Sans MS", cursive'; ctx.textAlign = 'center';
-  ctx.fillText(t.teaching ? '✏️  ½ + ¼ = ¾ … pay attention!' : 'Today: Fractions  ·  No phones!', 480, 26);
+  const g = state.game;
+  ctx.font = '13px "Comic Sans MS", cursive';
+  ctx.fillText(g.topic ? `${g.topicName}:  ${g.board}` : 'No topic yet…  (teacher: T → Topic)', 480, 26);
   // clock
   ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(900, 12, 10, 0, 7); ctx.fill();
   ctx.strokeStyle = '#333'; ctx.beginPath(); ctx.moveTo(900, 12); ctx.lineTo(900 + Math.cos(Date.now() / 600) * 7, 12 + Math.sin(Date.now() / 600) * 7); ctx.stroke();
@@ -298,11 +387,33 @@ function drawPerson(e, p, teacher) {
   let icon = '';
   if (teacher) icon = e.teaching ? '📖' : '';
   else if (e.det) icon = `⛓${e.det}`;
+  else if (e.hand) icon = '✋';
+  else if (e.req) icon = '🙋';
+  else if (e.pass) icon = '🎫';
   else if (e.act === 'phone') icon = '📱';
   else if (e.act === 'note') icon = '✉️';
   else if (e.mis) icon = '❗';
   if (icon) { ctx.font = '14px system-ui'; ctx.fillText(icon, p.x + r + 8, p.y - r + 2); }
 }
+
+function drawBubble(e, p) {
+  if (!e.say) return;
+  ctx.font = '12px system-ui';
+  const words = e.say.split(' '), rows = [];
+  let row = '';
+  for (const w of words) { const t = row ? row + ' ' + w : w; if (ctx.measureText(t).width > 170 && row) { rows.push(row); row = w; } else row = t; }
+  rows.push(row);
+  const bw = Math.max(...rows.map(r => ctx.measureText(r).width)) + 14, bh = rows.length * 15 + 8;
+  const bx = clampN(p.x - bw / 2, WALL, W - WALL - bw), by = Math.max(4, p.y - 40 - bh);
+  ctx.fillStyle = e.id === 'T' ? '#fff3bf' : '#fff';
+  ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 7); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(p.x - 5, by + bh); ctx.lineTo(p.x, by + bh + 7); ctx.lineTo(p.x + 5, by + bh); ctx.fill();
+  ctx.fillStyle = '#222'; ctx.textAlign = 'left';
+  rows.forEach((r, i) => ctx.fillText(r, bx + 7, by + 16 + i * 15));
+  ctx.textAlign = 'center';
+}
+const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
 
 let last = performance.now();
 function frame(now) {
@@ -326,8 +437,21 @@ function frame(now) {
       const x = n.x1 + (n.x2 - n.x1) * n.t, y = n.y1 + (n.y2 - n.y1) * n.t;
       ctx.fillStyle = '#fff'; ctx.fillRect(x - 5, y - 4, 10, 8); ctx.strokeStyle = '#999'; ctx.strokeRect(x - 5, y - 4, 10, 8);
     }
+    // teacher's pointed-at student and the student who has been called on
+    const m0 = me();
+    teacherTarget = null;
+    if (m0 && m0.role === 'teacher') {
+      let best = 70;
+      for (const s of g.students) { if (s.det) continue; const p = smooth.get(s.id), d = Math.hypot(p.x - mouse.x, p.y - mouse.y); if (d < best) { best = d; teacherTarget = s.id; } }
+      if (teacherTarget) { const p = smooth.get(teacherTarget); ctx.strokeStyle = '#ff922b'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.arc(p.x, p.y, 24, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
+    }
+    if (g.ask && g.ask.called) {
+      const p = smooth.get(g.ask.called);
+      if (p) { ctx.fillStyle = 'rgba(255,255,200,.35)'; ctx.beginPath(); ctx.arc(p.x, p.y, 32, 0, 7); ctx.fill(); }
+    }
     for (const s of g.students) drawPerson(s, smooth.get(s.id), false);
     drawPerson(g.teacher, smooth.get('T'), true);
+    for (const e of ents) drawBubble(e, smooth.get(e.id));
     for (const b of g.balls) { ctx.fillStyle = '#f8f9fa'; ctx.strokeStyle = '#adb5bd'; ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, 7); ctx.fill(); ctx.stroke(); }
     // aim line for students
     const m = me();
