@@ -10,15 +10,13 @@ const DETENTION = { x: 30, y: 520, w: 120, h: 90 };
 const VIEW_RANGE = 300, VIEW_HALF = Math.PI * 0.3;
 
 const $ = id => document.getElementById(id);
-const canvas = $('c'), ctx = canvas.getContext('2d');
+const canvas = $('c');
 
 let net = null, myId = null, state = null, lanUrls = [], lines = null, room = null;
 let talkOpen = false, talkCat = null, teacherTarget = null;
 const smooth = new Map(); // entity id -> displayed {x,y}
 const floaters = [];
 const keys = {};
-let mouse = { x: 0, y: 0 };
-let view = { s: 1, ox: 0, oy: 0 };
 
 // ---- Connection ---------------------------------------------------------
 // Two ways to play: the Node LAN server (WebSocket), or peer-to-peer rooms (works on GitHub Pages),
@@ -200,11 +198,11 @@ function renderHud() {
   if (!m) { $('hudRight').textContent = 'Spectating'; return; }
   if (m.role === 'teacher') {
     $('hudRight').textContent = `🍎 ${m.e.name} · Score ${m.e.score} · Catches ${m.e.catches}${g.quizCd > 0 ? ` · Quiz in ${g.quizCd}s` : ' · Quiz ready (Q)'}`;
-    $('help').textContent = 'WASD move · Mouse look · T: talk (topics, questions, discipline, praise) · Right-click a student: call on them · SPACE / click: catch · E at board: teach · Y/N: answer requests';
+    $('help').textContent = 'Click to look around (Esc frees the mouse) · WASD move · Tab / look at a kid: select · T: talk · Right-click: call on selected · Space/click: catch · E at board: teach · Y/N: requests · V: camera';
   } else {
     const s = m.e;
     $('hudRight').textContent = s.det ? (s.office ? `🏫 PRINCIPAL'S OFFICE ${s.det}s` : `⛓ DETENTION ${s.det}s`) : `🎒 ${s.name} · Grade ${s.grade} · Mischief ${s.mischief} · Score ${s.score}`;
-    $('help').textContent = 'WASD move · T: talk · H: raise hand · 1–4: answer · Hold F: phone · N: note · Click: throw paper ball · E: sit — stay out of the yellow cone when you misbehave!';
+    $('help').textContent = 'Click to look around (Esc frees the mouse) · WASD move · T: talk · H: hand · 1–4: answer · Hold F: phone · N: note · G: dance · Click: throw · E: sit · V: camera — avoid the yellow cone!';
   }
 }
 
@@ -266,11 +264,13 @@ addEventListener('keydown', e => {
     if (e.code === 'Space') { send({ t: 'act', a: 'catch' }); e.preventDefault(); }
     if (e.code === 'KeyE') send({ t: 'act', a: 'teach' });
     if (e.code === 'KeyQ') sayLine('quiz');
+    if (e.code === 'Tab') { e.preventDefault(); cycleSelection(); }
     if (e.code === 'KeyY' || e.code === 'KeyN') { const r = state.game.students.find(s => s.req); if (r) send({ t: 'act', a: 'reply', sid: r.id, yes: e.code === 'KeyY' }); }
   } else {
     if (e.code === 'KeyN') send({ t: 'act', a: 'note' });
     if (e.code === 'KeyE') send({ t: 'act', a: 'sit' });
     if (e.code === 'KeyH') sayLine('hand');
+    if (e.code === 'KeyG') sayLine('dance');
     if (/^Digit[1-4]$/.test(e.code)) send({ t: 'act', a: 'answer', i: +e.code.slice(5) - 1 });
   }
 });
@@ -288,7 +288,7 @@ function talkPick(i) {
   if (!talkCat) { talkCat = it.cat; renderTalk(true); return; }
   sayLine(it.id); talkOpen = false; renderTalk(true);
 }
-const CAT_ICON = { Topic: '📚', Ask: '❓', Discipline: '📢', Praise: '⭐', Class: '✋', Requests: '🙋', Mischief: '😈', Nice: '😇' };
+const CAT_ICON = { Topic: '📚', Ask: '❓', Chat: '💬', Discipline: '📢', Praise: '⭐', Class: '✋', Requests: '🙋', Mischief: '😈', Nice: '😇' };
 let talkKey = '';
 function renderTalk(force) {
   const el = $('talk'), m = me();
@@ -303,7 +303,7 @@ function renderTalk(force) {
   el.innerHTML = `<h4><span>${talkCat ? CAT_ICON[talkCat] + ' ' + talkCat : '💬 What do you want to say?'}</span><span>${talkCat ? 'Esc: back' : 'Esc: close'}</span></h4>` +
     items.map((it, i) => {
       if (!talkCat) return `<button data-i="${i}"><span class="k">${i + 1}</span>${CAT_ICON[it.cat] || ''} ${esc(it.cat)}</button>`;
-      const text = (it.label || it.text).replace('{name}', tgt ? tgt.name : '‹pointed student›').replace('{teacher}', state.game.teacher.name);
+      const text = (it.label || it.text).replace('{name}', tgt ? tgt.name : '‹selected kid›').replace('{teacher}', state.game.teacher.name).replace('{topic}', state.game.topicName || '‹topic›');
       const cd = cds[it.id];
       const current = it.id === 'topic_' + state.game.topic ? ' ✓' : '';
       return `<button data-i="${i}" ${cd ? 'disabled' : ''}><span class="k">${i + 1}</span>“${esc(text)}”${current}${cd ? ` (${cd}s)` : ''}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</button>`;
@@ -351,208 +351,4 @@ function renderRequests() {
 }
 addEventListener('keyup', e => { if (KEYMAP[e.code]) keys[KEYMAP[e.code]] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
-canvas.addEventListener('mousemove', e => { mouse = toWorld(e.clientX, e.clientY); });
-canvas.addEventListener('mousedown', e => {
-  if (!state || state.phase !== 'class') return;
-  mouse = toWorld(e.clientX, e.clientY);
-  const m = me(); if (!m) return;
-  if (m.role === 'teacher') {
-    if (e.button === 2) { if (teacherTarget) send({ t: 'say', id: 'call', target: teacherTarget }); }
-    else send({ t: 'act', a: 'catch' });
-  } else if (e.button === 0) send({ t: 'act', a: 'throw', aim: aimFrom(m.e) });
-});
-canvas.addEventListener('contextmenu', e => e.preventDefault());
-
-function toWorld(cx, cy) { return { x: (cx - view.ox) / view.s, y: (cy - view.oy) / view.s }; }
-function aimFrom(e) { const p = smooth.get(e.id) || e; return Math.atan2(mouse.y - p.y, mouse.x - p.x); }
-
-setInterval(() => {
-  if (!state || !state.game || (state.phase !== 'class' && state.phase !== 'recess')) return;
-  const m = me(); if (!m) return;
-  send({ t: 'input', up: keys.up, down: keys.down, left: keys.left, right: keys.right, phone: keys.phone, aim: aimFrom(m.e) });
-}, 50);
-
-// ---- Rendering ----------------------------------------------------------
-function resize() {
-  const dpr = devicePixelRatio || 1;
-  canvas.width = innerWidth * dpr; canvas.height = innerHeight * dpr;
-  const top = 40, bottom = 30;
-  const s = Math.min(innerWidth / W, (innerHeight - top - bottom) / H);
-  view = { s, ox: (innerWidth - W * s) / 2, oy: top + (innerHeight - top - bottom - H * s) / 2, dpr };
-}
-addEventListener('resize', resize); resize();
-
-function drawRoom() {
-  // floor
-  ctx.fillStyle = '#c89f6a'; ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = 'rgba(90,60,30,.18)'; ctx.lineWidth = 1;
-  for (let y = 0; y < H; y += 32) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-  // walls
-  ctx.fillStyle = '#5b4636';
-  ctx.fillRect(0, 0, W, WALL); ctx.fillRect(0, H - WALL, W, WALL); ctx.fillRect(0, 0, WALL, H); ctx.fillRect(W - WALL, 0, WALL, H);
-  // windows
-  ctx.fillStyle = '#a5d8ff';
-  for (const y of [120, 260, 400]) ctx.fillRect(4, y, 14, 80);
-  // door
-  ctx.fillStyle = '#8b5a2b'; ctx.fillRect(W - WALL, 530, WALL, 80);
-  ctx.fillStyle = '#ffd43b'; ctx.beginPath(); ctx.arc(W - 16, 572, 3, 0, 7); ctx.fill();
-  // blackboard
-  const t = state.game.teacher;
-  ctx.fillStyle = '#7a5230'; ctx.fillRect(292, 2, 376, 40);
-  ctx.fillStyle = t.teaching ? '#2f6b45' : '#264d36'; ctx.fillRect(298, 6, 364, 30);
-  ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = '15px "Comic Sans MS", cursive'; ctx.textAlign = 'center';
-  const g = state.game;
-  ctx.font = '13px "Comic Sans MS", cursive';
-  ctx.fillText(g.topic ? `${g.topicName}:  ${g.board}` : 'No topic yet…  (teacher: T → Topic)', 480, 26);
-  // clock
-  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(900, 12, 10, 0, 7); ctx.fill();
-  ctx.strokeStyle = '#333'; ctx.beginPath(); ctx.moveTo(900, 12); ctx.lineTo(900 + Math.cos(Date.now() / 600) * 7, 12 + Math.sin(Date.now() / 600) * 7); ctx.stroke();
-  // detention corner
-  ctx.save();
-  ctx.beginPath(); ctx.rect(DETENTION.x, DETENTION.y, DETENTION.w, DETENTION.h); ctx.clip();
-  ctx.fillStyle = 'rgba(200,40,40,.25)'; ctx.fillRect(DETENTION.x, DETENTION.y, DETENTION.w, DETENTION.h);
-  ctx.strokeStyle = 'rgba(200,40,40,.35)'; ctx.lineWidth = 6;
-  for (let i = -100; i < 200; i += 18) { ctx.beginPath(); ctx.moveTo(DETENTION.x + i, DETENTION.y); ctx.lineTo(DETENTION.x + i + 90, DETENTION.y + 90); ctx.stroke(); }
-  ctx.restore();
-  ctx.fillStyle = '#c92a2a'; ctx.font = 'bold 13px system-ui'; ctx.fillText('DETENTION', DETENTION.x + DETENTION.w / 2, DETENTION.y + 14);
-  // teacher desk
-  ctx.fillStyle = '#6d4425'; ctx.fillRect(TDESK.x - TDESK.w / 2, TDESK.y - TDESK.h / 2, TDESK.w, TDESK.h);
-  ctx.fillStyle = '#f8f9fa'; ctx.fillRect(TDESK.x - 40, TDESK.y - 12, 30, 20);
-  ctx.font = '20px serif'; ctx.fillText('🍎', TDESK.x + 35, TDESK.y + 7);
-  // student desks + chairs
-  for (const d of DESKS) {
-    ctx.fillStyle = '#a0522d'; ctx.fillRect(d.x - 35, d.y - 20, 70, 40);
-    ctx.fillStyle = 'rgba(255,255,255,.15)'; ctx.fillRect(d.x - 30, d.y - 15, 60, 6);
-    ctx.fillStyle = '#495057'; ctx.fillRect(d.x - 14, d.y + 24, 28, 22);
-  }
-}
-
-function drawCone(t, p) {
-  const alert = state.game.students.some(s => s.mis && inCone(p, t.a, s));
-  ctx.fillStyle = t.teaching ? 'rgba(255,255,255,.06)' : alert ? 'rgba(255,90,90,.22)' : 'rgba(255,236,120,.22)';
-  ctx.beginPath(); ctx.moveTo(p.x, p.y);
-  ctx.arc(p.x, p.y, VIEW_RANGE, t.a - VIEW_HALF, t.a + VIEW_HALF); ctx.closePath(); ctx.fill();
-}
-function inCone(p, a, e) {
-  const q = smooth.get(e.id) || e;
-  const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
-  if (d > VIEW_RANGE) return false; if (d < 40) return true;
-  let diff = Math.atan2(dy, dx) - a; while (diff > Math.PI) diff -= 2 * Math.PI; while (diff < -Math.PI) diff += 2 * Math.PI;
-  return Math.abs(diff) <= VIEW_HALF;
-}
-
-function drawPerson(e, p, teacher) {
-  const r = teacher ? 16 : 13;
-  if (e.pid === myId) { ctx.strokeStyle = '#ffd43b'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(p.x, p.y, r + 6, 0, 7); ctx.stroke(); }
-  ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.beginPath(); ctx.ellipse(p.x + 2, p.y + 4, r, r * 0.8, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = e.color; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill();
-  // head, offset toward facing
-  const hx = p.x + Math.cos(e.a) * 4, hy = p.y + Math.sin(e.a) * 4;
-  ctx.fillStyle = '#f5d0a9'; ctx.beginPath(); ctx.arc(hx, hy, r * 0.62, 0, 7); ctx.fill();
-  ctx.fillStyle = '#222'; // eyes
-  for (const s of [-1, 1]) {
-    const ea = e.a + s * 0.45;
-    ctx.beginPath(); ctx.arc(hx + Math.cos(ea) * r * 0.42, hy + Math.sin(ea) * r * 0.42, 1.8, 0, 7); ctx.fill();
-  }
-  if (teacher) { ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(hx, hy, r * 0.62, e.a - 0.9, e.a + 0.9); ctx.stroke(); }
-  // name
-  ctx.font = `${e.pid ? 'bold ' : ''}11px system-ui`; ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(0,0,0,.55)'; const label = e.pid === myId ? `${e.name} (you)` : e.name;
-  const w = ctx.measureText(label).width + 8; ctx.fillRect(p.x - w / 2, p.y - r - 19, w, 14);
-  ctx.fillStyle = e.pid ? '#ffe066' : '#fff'; ctx.fillText(label, p.x, p.y - r - 8);
-  // status icon
-  let icon = '';
-  if (teacher) icon = e.teaching ? '📖' : '';
-  else if (e.det) icon = `⛓${e.det}`;
-  else if (e.hand) icon = '✋';
-  else if (e.req) icon = '🙋';
-  else if (e.pass) icon = '🎫';
-  else if (e.act === 'phone') icon = '📱';
-  else if (e.act === 'note') icon = '✉️';
-  else if (e.mis) icon = '❗';
-  if (icon) { ctx.font = '14px system-ui'; ctx.fillText(icon, p.x + r + 8, p.y - r + 2); }
-}
-
-function drawBubble(e, p) {
-  if (!e.say) return;
-  ctx.font = '12px system-ui';
-  const words = e.say.split(' '), rows = [];
-  let row = '';
-  for (const w of words) { const t = row ? row + ' ' + w : w; if (ctx.measureText(t).width > 170 && row) { rows.push(row); row = w; } else row = t; }
-  rows.push(row);
-  const bw = Math.max(...rows.map(r => ctx.measureText(r).width)) + 14, bh = rows.length * 15 + 8;
-  const bx = clampN(p.x - bw / 2, WALL, W - WALL - bw), by = Math.max(4, p.y - 40 - bh);
-  ctx.fillStyle = e.id === 'T' ? '#fff3bf' : '#fff';
-  ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 7); ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(p.x - 5, by + bh); ctx.lineTo(p.x, by + bh + 7); ctx.lineTo(p.x + 5, by + bh); ctx.fill();
-  ctx.fillStyle = '#222'; ctx.textAlign = 'left';
-  rows.forEach((r, i) => ctx.fillText(r, bx + 7, by + 16 + i * 15));
-  ctx.textAlign = 'center';
-}
-const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
-
-let last = performance.now();
-function frame(now) {
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#1d1a24'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (state && state.game && state.phase !== 'lobby') {
-    const d = view.dpr;
-    ctx.setTransform(view.s * d, 0, 0, view.s * d, view.ox * d, view.oy * d);
-    const g = state.game;
-    const k = 1 - Math.exp(-dt * 18);
-    const ents = [g.teacher, ...g.students];
-    for (const e of ents) {
-      let p = smooth.get(e.id);
-      if (!p || Math.hypot(p.x - e.x, p.y - e.y) > 80) { p = { x: e.x, y: e.y }; smooth.set(e.id, p); }
-      p.x += (e.x - p.x) * k; p.y += (e.y - p.y) * k;
-    }
-    drawRoom();
-    drawCone(g.teacher, smooth.get('T'));
-    for (const n of g.notes) {
-      const x = n.x1 + (n.x2 - n.x1) * n.t, y = n.y1 + (n.y2 - n.y1) * n.t;
-      ctx.fillStyle = '#fff'; ctx.fillRect(x - 5, y - 4, 10, 8); ctx.strokeStyle = '#999'; ctx.strokeRect(x - 5, y - 4, 10, 8);
-    }
-    // teacher's pointed-at student and the student who has been called on
-    const m0 = me();
-    teacherTarget = null;
-    if (m0 && m0.role === 'teacher') {
-      let best = 70;
-      for (const s of g.students) { if (s.office) continue; const p = smooth.get(s.id), d = Math.hypot(p.x - mouse.x, p.y - mouse.y); if (d < best) { best = d; teacherTarget = s.id; } }
-      if (teacherTarget) { const p = smooth.get(teacherTarget); ctx.strokeStyle = '#ff922b'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.arc(p.x, p.y, 24, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
-    }
-    if (g.ask && g.ask.called) {
-      const p = smooth.get(g.ask.called);
-      if (p) { ctx.fillStyle = 'rgba(255,255,200,.35)'; ctx.beginPath(); ctx.arc(p.x, p.y, 32, 0, 7); ctx.fill(); }
-    }
-    for (const s of g.students) if (!s.office) drawPerson(s, smooth.get(s.id), false);
-    drawPerson(g.teacher, smooth.get('T'), true);
-    for (const e of ents) if (!e.office) drawBubble(e, smooth.get(e.id));
-    const inOffice = g.students.filter(s => s.office);
-    if (inOffice.length) {
-      ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'right'; ctx.fillStyle = '#fff';
-      ctx.fillText(`🏫 Principal's office: ${inOffice.map(s => `${s.name} (${s.det}s)`).join(', ')}`, W - WALL - 4, H - 6);
-      ctx.textAlign = 'center';
-    }
-    for (const b of g.balls) { ctx.fillStyle = '#f8f9fa'; ctx.strokeStyle = '#adb5bd'; ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, 7); ctx.fill(); ctx.stroke(); }
-    // aim line for students
-    const m = me();
-    if (m && m.role === 'student' && !m.e.det && state.phase === 'class') {
-      const p = smooth.get(m.e.id), a = aimFrom(m.e);
-      ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.setLineDash([4, 6]); ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.cos(a) * 60, p.y + Math.sin(a) * 60); ctx.stroke(); ctx.setLineDash([]);
-    }
-    for (const f of floaters) {
-      f.t += dt;
-      ctx.globalAlpha = Math.max(0, 1 - f.t / 2.2);
-      ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center';
-      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.strokeText(f.text, f.x, f.y - f.t * 25);
-      ctx.fillStyle = f.color; ctx.fillText(f.text, f.x, f.y - f.t * 25);
-      ctx.globalAlpha = 1;
-    }
-  }
-  for (let i = floaters.length - 1; i >= 0; i--) if (floaters[i].t > 2.2) floaters.splice(i, 1);
-  requestAnimationFrame(frame);
-}
-requestAnimationFrame(frame);
+// The 3D view, camera, mouse controls and movement live in world3d.js

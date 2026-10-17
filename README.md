@@ -7,9 +7,23 @@ A LAN multiplayer school game for up to **3 players**. Everybody else in the cla
 - If nobody is the teacher, an NPC teacher runs the class.
 - NPC students fill every empty desk (12 desks in all). If a player leaves mid-game, an NPC takes over their character, and a late joiner takes over an NPC student.
 
+A **3D** school game for up to **3 players**. Everybody else in the classroom is an NPC with their own personality.
+
 ## How to play
 
 A match is **3 periods** of 2½ minutes each, with a short recess in between.
+
+### Controls
+| | |
+|---|---|
+| **Click** the game | Lock the mouse and look around (third-person). **Esc** frees the mouse to click menus. |
+| `WASD` | Move |
+| `V` | Switch between third-person and bird's-eye view |
+| `T` | Talk: open the dialogue menu (number keys pick) |
+| `M` | Sound on/off |
+
+### NPC personalities
+Every NPC kid has a **favourite subject** and one they **hate**. When the teacher changes the topic, fans cheer ("Yes! Math!") and haters groan ("Ugh, history… Zzz"). Kids raise their hands more and answer better in subjects they love, and act up more in ones they hate, so picking the topic matters. Ask a kid "What's your favourite subject?" to find out.
 
 ### Talking (press `T`)
 Both roles have a **dialogue menu**. Press `T`, pick a type of dialogue, then pick a line (number keys or click). What you say pops up in a speech bubble, and every line does something. NPCs talk too.
@@ -18,7 +32,8 @@ Both roles have a **dialogue menu**. Press `T`, pick a type of dialogue, then pi
 |---|---|
 | 📚 **Topic** — "Today's topic is Math / Science / Geography / History / English!" | Starts a topic: it goes on the blackboard, and questions and quizzes come from it. You need a topic before you can teach or ask. |
 | ❓ **Ask** — "Who can tell me the answer?" | Asks the class a question. Students raise their hands ✋. |
-| ❓ **Ask** — "{name}, can you answer this?" | Calls on the student you're pointing at (or **right-click** them). Calling on someone who's goofing off catches them off guard. |
+| ❓ **Ask** — "{name}, can you answer this?" | Calls on the selected kid (or **right-click**). Calling on someone who's goofing off catches them off guard. |
+| 💬 **Chat** — "What's your favourite subject?", "How are you finding this lesson?", "Did you do your homework?", "Are you paying attention?", "Why are you out of your seat?" | Talk to the selected kid. They answer based on their personality and what they're up to. |
 | ❓ **Ask** — "Yes, {name}? Your hand is up." | Calls on someone with their hand up. |
 | ❓ **Ask** — "Pop quiz! Pencils out!" | The whole class answers (also `Q`). |
 | 📢 **Discipline** — "Shhh!", "Eyes up here!", "Put that phone away!" | Settles the kids near you or the whole class, or takes a phone. |
@@ -28,13 +43,14 @@ Both roles have a **dialogue menu**. Press `T`, pick a type of dialogue, then pi
 
 | Student dialogue | What it does |
 |---|---|
-| ✋ **Class** — raise hand (`H`), "I don't know…", "Why do we need to learn this?" | Answer when called (`1`–`4`) for grade points. |
+| ✋ **Class** — raise hand (`H`), "I don't know…", "Why do we need to learn this?", "I love {topic}!", "{topic} is the WORST!" | Answer when called (`1`–`4`) for grade points. Classmates agree or argue with your opinions. |
 | 🙋 **Requests** — bathroom / water / nurse | The teacher says yes or no (`Y`/`N`). A yes gives a 🎫 hall pass: 15 s to roam without trouble. |
-| 😈 **Mischief** — "This is sooo boring!", whisper to a neighbour, fart noise | Mischief points, but the teacher can hear you. |
+| 😈 **Mischief** — "This is sooo boring!", whisper to a neighbour, fart noise, dance (`G`) | Mischief points, but the teacher can hear you. |
 | 😇 **Nice** — compliment the teacher, offer to help | A few grade points. |
 
 ### Teacher
 Keep the class under control.
+- **Selecting a kid:** any kid within range appears in the **Kids in range** panel. Look at a kid, press **Tab** to cycle, or click a name. Lines with {name} go to the selected kid.
 - `WASD` move, mouse to look. Your **yellow vision cone** is visible to everyone.
 - `Space` / click: catch a misbehaving student inside your cone → 12 s detention. Accusing the wrong kid costs class order.
 - `E` at the blackboard: teach (needs a topic). The class learns faster and order goes up, **but you face the board** and can't see anyone.

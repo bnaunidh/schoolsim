@@ -103,6 +103,17 @@ function makeQuestion(topic) {
   return { q, options, answer: options.indexOf(opts[0]) };
 }
 
+// How NPC kids react to each topic, depending on whether it's their favourite or the one they hate
+const TOPIC_TALK = {
+  math: { love: ['Yes! Math!', 'I love numbers!', 'Math is my thing!'], hate: ['Ugh, math…', 'My brain hurts already.', 'Not fractions again…'], why: 'So you can count all your money one day!' },
+  science: { love: ['Science! Can we do experiments?', 'Cool, science!', 'Can we blow something up?'], hate: ['Science is so confusing…', 'Do we have to?', 'Ew, are we dissecting stuff?'], why: 'So you understand how the world works!' },
+  geography: { love: ['I love maps!', 'Geography rocks!', 'Can we look at the globe?'], hate: ['Who cares where Peru is?', 'Boooring…', 'I\'ll just use GPS.'], why: 'So you don\'t get lost on vacation!' },
+  history: { love: ['History is awesome!', 'Are we doing Vikings?', 'Knights! Yes!'], hate: ['That was like a million years ago…', 'Zzz…', 'Everyone in history is dead.'], why: 'So we don\'t repeat the same mistakes!' },
+  english: { love: ['I love reading!', 'Can we read a story?', 'Poems! Yay!'], hate: ['Not grammar again…', 'Ugh, spelling.', 'Words are hard.'], why: 'So you can write amazing stories!' },
+};
+const NEUTRAL_TOPIC = ['Okay…', 'Sure.', 'Hmm.', 'Fine.'];
+const TALK_RANGE = 320; // how close the teacher must be to single a kid out
+
 // ---- Dialogue -----------------------------------------------------------
 // Every line a player can pick from the T (talk) menu. `target` lines use the student under the teacher's cursor.
 const LINES = {
@@ -112,6 +123,11 @@ const LINES = {
     { cat: 'Ask', id: 'call', text: '{name}, can you answer this?', target: true, hint: 'call on the student you point at' },
     { cat: 'Ask', id: 'callhand', text: 'Yes, {name}? Your hand is up.', hint: 'pick someone with a hand up' },
     { cat: 'Ask', id: 'quiz', text: 'Pop quiz! Pencils out!', hint: 'everyone answers' },
+    { cat: 'Chat', id: 'q_fav', text: '{name}, what\'s your favourite subject?', target: true, cd: 3, hint: 'find out what they love and hate' },
+    { cat: 'Chat', id: 'q_feel', text: '{name}, how are you finding this lesson?', target: true, cd: 3, hint: 'depends on how they like the topic' },
+    { cat: 'Chat', id: 'q_hw', text: '{name}, did you do your homework?', target: true, cd: 3, hint: 'bold kids make excuses' },
+    { cat: 'Chat', id: 'q_attn', text: '{name}, are you paying attention?', target: true, cd: 3, hint: 'snaps a goofing kid back to work' },
+    { cat: 'Chat', id: 'q_seat', text: '{name}, why are you out of your seat?', target: true, cd: 3, hint: 'sends a wanderer back' },
     { cat: 'Discipline', id: 'shush', text: 'Shhh! Quiet down!', cd: 12, hint: 'stops mischief near you' },
     { cat: 'Discipline', id: 'eyes', text: 'Eyes up here, everyone!', cd: 25, hint: 'whole class settles down' },
     { cat: 'Discipline', id: 'phone', text: '{name}, put that phone away!', target: true, cd: 3, hint: 'confiscate a phone' },
@@ -126,12 +142,15 @@ const LINES = {
     { cat: 'Class', id: 'hand', text: '✋', label: 'Raise / lower hand', hint: 'teacher may call on you' },
     { cat: 'Class', id: 'idk', text: 'I don\'t know…', hint: 'skip when called' },
     { cat: 'Class', id: 'why', text: 'Why do we even need to learn this?', cd: 8, hint: 'cheeky (+2 mischief)' },
+    { cat: 'Class', id: 'love', text: 'I love {topic}!', cd: 15, hint: '+1 grade, the class reacts' },
+    { cat: 'Class', id: 'hate', text: '{topic} is the WORST!', cd: 12, hint: '+2 mischief, haters agree' },
     { cat: 'Requests', id: 'bathroom', text: 'Can I go to the bathroom?', cd: 10, hint: 'hall pass: roam for 15 s' },
     { cat: 'Requests', id: 'water', text: 'Can I get some water?', cd: 10, hint: 'hall pass: roam for 15 s' },
     { cat: 'Requests', id: 'nurse', text: 'I don\'t feel good… can I see the nurse?', cd: 10, hint: 'hall pass: roam for 15 s' },
     { cat: 'Mischief', id: 'boring', text: 'This is sooo boring!', cd: 6, hint: '+3 mischief' },
     { cat: 'Mischief', id: 'whisper', text: 'Psst, {name}! Look at this!', cd: 5, hint: 'whisper to a neighbour' },
     { cat: 'Mischief', id: 'fart', text: '*makes a fart noise*', cd: 15, hint: '+5 mischief, class laughs' },
+    { cat: 'Mischief', id: 'dance', text: '*busts out a dance*', cd: 10, hint: 'dance for 3 s (also G): +mischief' },
     { cat: 'Nice', id: 'compliment', text: 'You look great today, {teacher}!', cd: 20, hint: '+1 grade' },
     { cat: 'Nice', id: 'help', text: 'Can I help hand out papers?', cd: 30, hint: '+2 grade, +order' },
   ],
@@ -206,9 +225,16 @@ function createSchoolSim(opts = {}) {
       x: d.seatX, y: d.seatY, angle: -Math.PI / 2,
       grade: 0, mischief: 0, caught: 0, action: null, actionT: 0, misbehaveT: 0, detentionT: 0,
       throwCd: 0, noteCd: 0, quizAt: 0, hand: false, passT: 0, request: null, say: '', sayT: 0, cds: {},
-      ai: { bold: rand(0.4, 1.2), think: rand(0.5, 2), wX: 0, wPhase: 0, answerAt: 0 },
+      ai: { bold: rand(0.4, 1.2), think: rand(0.5, 2), wX: 0, wPhase: 0, answerAt: 0, ...personality() },
     };
   }
+
+  function personality() {
+    const [fav, hate] = shuffle(Object.keys(TOPICS));
+    return { fav, hate };
+  }
+  // How a kid feels about the current topic: 1 = favourite, -1 = hates it, 0 = meh
+  const mood = s => !game.topic ? 0 : s.ai.fav === game.topic ? 1 : s.ai.hate === game.topic ? -1 : 0;
 
   function startGame() {
     const list = [...players.values()];
@@ -233,7 +259,7 @@ function createSchoolSim(opts = {}) {
 
   const byId = id => (game.teacher.id === id ? game.teacher : game.students.find(s => s.id === id));
   const outOfSeat = s => Math.hypot(s.x - DESKS[s.desk].seatX, s.y - DESKS[s.desk].seatY) > 26;
-  const isMisbehaving = s => s.detentionT <= 0 && (s.action === 'phone' || s.action === 'note' || s.action === 'wander' || s.misbehaveT > 0 || (outOfSeat(s) && s.passT <= 0));
+  const isMisbehaving = s => s.detentionT <= 0 && (s.action === 'phone' || s.action === 'note' || s.action === 'wander' || s.action === 'dance' || s.misbehaveT > 0 || (outOfSeat(s) && s.passT <= 0));
   const activeStudents = () => game.students.filter(s => s.detentionT <= 0);
 
   function canSee(t, e) {
@@ -361,7 +387,7 @@ function createSchoolSim(opts = {}) {
       if (!s.playerId) {
         s.ai.answerAt -= DT;
         if (s.ai.answerAt <= 0) {
-          const p = 0.55 + (a.hadHand ? 0.25 : 0) - (a.wasMis ? 0.25 : 0);
+          const p = 0.55 + (a.hadHand ? 0.25 : 0) - (a.wasMis ? 0.25 : 0) + mood(s) * 0.2;
           studentAnswer(s, Math.random() < 0.1 ? -2 : Math.random() < p ? a.answer : Math.floor(Math.random() * 4));
         }
       } else if (a.t <= 0) {
@@ -396,13 +422,15 @@ function createSchoolSim(opts = {}) {
     if ((e.cds._any || 0) > 0) return tell(p, 'Not so fast!');
     const t = game.teacher;
     let target = targetId ? game.students.find(s => s.id === targetId && (id === 'release' ? s.detentionT > 0 && !s.office : s.detentionT <= 0)) : null;
-    if (line.target && !target) return tell(p, id === 'release' ? 'Point at a kid in detention first.' : 'Point your mouse at a student first.');
+    if (line.target && !target) return tell(p, id === 'release' ? 'Select a kid in detention first.' : 'Select a student first (look at them or press Tab).');
+    if (line.target && id !== 'release' && dist(target, e) > TALK_RANGE) return tell(p, `${target.name} is too far away — get closer.`);
     if (phase === 'recess' && role === 'teacher' && !id.startsWith('topic_')) { say(e, line.text.replace('{name}', target ? target.name : '')); return; }
 
     if (role === 'teacher') {
       if (id.startsWith('topic_')) {
         game.topic = id.slice(6);
         emit(`New topic: ${TOPICS[game.topic].name}`, 480, 110, '#ffd166');
+        reactToTopic();
       } else if (id === 'ask') {
         if (!game.topic) return tell(p, 'Start a topic first (Topic menu).');
         if (!startAsk()) return tell(p, 'Finish the current question first.');
@@ -418,9 +446,13 @@ function createSchoolSim(opts = {}) {
       } else if (id === 'quiz') {
         if (game.quizCd > 0) return tell(p, `Pop quiz ready in ${Math.ceil(game.quizCd)}s.`);
         if (!startQuiz()) return tell(p, 'Finish the current question first.');
+      } else if (id.startsWith('q_')) {
+        answerPersonal(target, id);
       } else if (id === 'shush') {
-        for (const s of activeStudents()) if (dist(s, t) < 260) settle(s);
+        const near = activeStudents().filter(s => dist(s, t) < 260);
+        for (const s of near) settle(s);
         game.order = Math.min(100, game.order + 3);
+        for (const s of shuffle(near.filter(s => !s.playerId)).slice(0, 2)) setTimeout(() => say(s, pick(['Sorry…', 'Okay okay.', '*whispers* rude', '…'])), rand(500, 1300));
       } else if (id === 'eyes') {
         for (const s of activeStudents()) { settle(s); if (!s.playerId && s.action !== 'pass') s.angle = Math.atan2(t.y - s.y, t.x - s.x); }
         game.order = Math.min(100, game.order + 5);
@@ -468,7 +500,23 @@ function createSchoolSim(opts = {}) {
       if (id === 'hand') { s.hand = !s.hand; if (!s.hand) text = ''; }
       else if (id === 'idk') {
         if (game.ask && game.ask.phase === 'answer' && game.ask.called === s.id) return studentAnswer(s, -2);
-      } else if (id === 'why') { mischief(s, 2, 1.5, 1); reply(t, 'Because it\'s on the test!'); }
+      } else if (id === 'why') { mischief(s, 2, 1.5, 1); reply(t, game.topic ? TOPIC_TALK[game.topic].why : 'Because it\'s on the test!'); }
+      else if (id === 'love' || id === 'hate') {
+        if (!game.topic) return tell(p, 'There\'s no topic yet.');
+        text = line.text.replace('{topic}', TOPICS[game.topic].name);
+        if (id === 'love') { if (phase === 'class') s.grade += 1; reply(t, 'That\'s the spirit!'); }
+        else { mischief(s, 2, 1.5, 1); reply(t, 'I heard that!'); }
+        // Classmates who share (or oppose) the opinion chime in
+        const talk = TOPIC_TALK[game.topic], want = id === 'love' ? 1 : -1;
+        for (const o of activeStudents().filter(o => !o.playerId && o !== s && mood(o) === want).slice(0, 2)) {
+          setTimeout(() => say(o, pick(['Same!', 'Yeah!', 'Totally!', want > 0 ? pick(talk.love) : pick(talk.hate)])), rand(500, 1500));
+        }
+        const other = activeStudents().find(o => !o.playerId && o !== s && mood(o) === -want);
+        if (other) setTimeout(() => say(other, want > 0 ? 'Nerd.' : 'No way, it\'s the best!'), rand(1200, 2200));
+      } else if (id === 'dance') {
+        if (phase === 'class') { s.action = 'dance'; s.actionT = 3; mischief(s, 3, 0, 2); }
+        for (const o of activeStudents().filter(o => o !== s && !o.playerId && dist(o, s) < 260).slice(0, 3)) say(o, pick(['Woooo!', 'Go go go!', 'LOL nice moves', 'Cringe…']));
+      }
       else if (['bathroom', 'water', 'nurse'].includes(id)) {
         if (s.request || s.passT > 0) return;
         s.request = { kind: id, t: 10 };
@@ -489,6 +537,44 @@ function createSchoolSim(opts = {}) {
     }
     e.cds[id] = line.cd || 0;
     e.cds._any = 0.4;
+  }
+
+  function reactToTopic() {
+    const talk = TOPIC_TALK[game.topic];
+    const npcs = shuffle(activeStudents().filter(s => !s.playerId));
+    // Everyone who loves or hates it speaks up; a couple of others shrug
+    let shrugs = 2;
+    for (const s of npcs) {
+      const m = mood(s);
+      if (!m && shrugs-- <= 0) continue;
+      const text = m > 0 ? pick(talk.love) : m < 0 ? pick(talk.hate) : pick(NEUTRAL_TOPIC);
+      setTimeout(() => game && s.detentionT <= 0 && say(s, text), rand(400, 2200));
+    }
+  }
+
+  // The teacher singled a kid out with a personal question
+  function answerPersonal(s, id) {
+    const later = (text, fx) => setTimeout(() => { if (!game || s.detentionT > 0) return; if (fx) fx(); if (!s.playerId) say(s, text); }, 900);
+    if (s.playerId) tell(players.get(s.playerId), `${game.teacher.name} is talking to you! Answer with T.`);
+    const topic = game.topic && TOPICS[game.topic].name;
+    if (id === 'q_fav') {
+      later(`I love ${TOPICS[s.ai.fav].name}! But ${TOPICS[s.ai.hate].name}… ugh.`);
+    } else if (id === 'q_feel') {
+      const m = mood(s);
+      later(!topic ? 'What lesson? We haven\'t started.' : m > 0 ? `Great! ${topic} is my favourite!` : m < 0 ? `Honestly? ${topic} is torture.` : 'It\'s… fine, I guess.');
+    } else if (id === 'q_hw') {
+      const r = Math.random() * s.ai.bold;
+      if (r < 0.35) later('Yes! Here it is.', () => { s.grade += 1; });
+      else if (r < 0.7) later(pick(['My dog ate it…', 'I left it at home!', 'My little brother spilled juice on it.']));
+      else later('What homework?', () => { game.order = Math.max(0, game.order - 1); });
+    } else if (id === 'q_attn') {
+      if (isMisbehaving(s)) later(pick(['Y-yes! Totally!', 'Uh… what was the question?']), () => { settle(s); s.mischief = Math.max(0, s.mischief - 2); game.order = Math.min(100, game.order + 2); });
+      else later('Yes, of course!');
+    } else if (id === 'q_seat') {
+      if (s.passT > 0) later('I have a hall pass!');
+      else if (outOfSeat(s)) later(pick(['Sorry! Going back.', 'I was just… stretching.']), () => { settle(s); if (s.action === 'wander') s.ai.wPhase = 2; game.order = Math.min(100, game.order + 1); });
+      else later('I\'m… in my seat?', () => { game.order = Math.max(0, game.order - 1); });
+    }
   }
 
   function mischief(s, pts, misT, orderLoss) {
@@ -518,7 +604,8 @@ function createSchoolSim(opts = {}) {
   // ---- Simulation ---------------------------------------------------------
   function movePlayer(e, inp, speed) {
     let dx = (inp.right ? 1 : 0) - (inp.left ? 1 : 0), dy = (inp.down ? 1 : 0) - (inp.up ? 1 : 0);
-    if (!dx && !dy) return false;
+    if (inp.mx != null && inp.my != null) { dx = inp.mx; dy = inp.my; }
+    if (Math.hypot(dx, dy) < 0.05) return false;
     const l = Math.hypot(dx, dy);
     e.x += dx / l * speed * DT; e.y += dy / l * speed * DT;
     collide(e);
@@ -635,6 +722,10 @@ function createSchoolSim(opts = {}) {
       return;
     }
     if (ai.pause > 0) {
+      if (Math.random() < DT * 0.12) {
+        const kid = activeStudents().filter(s => dist(s, t) < TALK_RANGE * 0.7).sort(() => Math.random() - 0.5)[0];
+        if (kid) speak(t, 'teacher', pick(['q_fav', 'q_feel', 'q_hw', isMisbehaving(kid) ? 'q_attn' : 'q_feel', outOfSeat(kid) ? 'q_seat' : 'q_hw']), kid.id);
+      }
       ai.pause -= DT;
       ai.scan += DT * 1.6;
       t.angle += DT * 1.6 * Math.cos(ai.scan) * 1.5;
@@ -677,7 +768,7 @@ function createSchoolSim(opts = {}) {
       s.angle = p.input.aim;
       if (p.input.phone && phase === 'class' && s.phoneBan <= 0) s.action = 'phone';
       else if (s.action === 'phone') s.action = null;
-      if (s.action === 'note') { s.actionT -= DT; if (s.actionT <= 0) s.action = null; }
+      if (s.action === 'note' || s.action === 'dance') { s.actionT -= DT; if (s.actionT <= 0) s.action = null; }
     } else {
       npcStudent(s, t);
     }
@@ -722,7 +813,7 @@ function createSchoolSim(opts = {}) {
 
     if (game.quiz && game.quiz.reveal <= 0 && !(s.id in game.quiz.answers)) {
       s.quizAt -= DT;
-      if (s.quizAt <= 0) game.quiz.answers[s.id] = Math.random() < 0.65 ? game.quiz.answer : Math.floor(Math.random() * 4);
+      if (s.quizAt <= 0) game.quiz.answers[s.id] = Math.random() < 0.65 + mood(s) * 0.2 ? game.quiz.answer : Math.floor(Math.random() * 4);
     }
 
     ai.think -= DT;
@@ -730,14 +821,15 @@ function createSchoolSim(opts = {}) {
     ai.think = rand(0.8, 1.4);
     if (phase !== 'class' || game.quiz) return;
     if (game.ask) {
-      if (game.ask.phase === 'hands' && !s.hand && Math.random() < 0.35 * (1.4 - ai.bold)) {
+      if (game.ask.phase === 'hands' && !s.hand && Math.random() < 0.35 * (1.4 - ai.bold) * (1 + mood(s) * 0.7)) {
         s.hand = true;
-        if (Math.random() < 0.3) say(s, pick(['Ooh! Me!', 'I know!', 'Pick me!']));
+        if (Math.random() < 0.3) say(s, mood(s) > 0 ? pick(['Ooh! I know this one!', 'Easy!', 'Me! Me! Me!']) : pick(['Ooh! Me!', 'I know!', 'Pick me!']));
       }
       return;
     }
     let chance = seen ? 0.012 : 0.05 * ai.bold;
     if (t.teaching) chance *= 1.6;
+    chance *= [1.7, 1, 0.5][mood(s) + 1]; // bored kids act up, fans pay attention
     if (Math.random() >= chance) {
       if (Math.random() < 0.002 && !s.request && s.passT <= 0) speak(s, 'student', pick(['bathroom', 'water', 'nurse']));
       return;
@@ -746,7 +838,7 @@ function createSchoolSim(opts = {}) {
     const roll = Math.random();
     if (roll < 0.35) { s.action = 'phone'; s.actionT = rand(2, 6); s.angle = Math.PI / 2; if (Math.random() < 0.2) say(s, 'lol'); }
     else if (roll < 0.52) passNote(s);
-    else if (roll < 0.62) speak(s, 'student', pick(['boring', 'whisper', 'why', 'fart']));
+    else if (roll < 0.62) speak(s, 'student', pick(mood(s) < 0 ? ['boring', 'hate', 'why', 'dance'] : ['boring', 'whisper', 'why', 'fart', 'dance']));
     else if (roll < 0.85) {
       const targets = activeStudents().filter(o => o !== s);
       const tgt = Math.random() < 0.15 ? t : pick(targets);
@@ -878,7 +970,7 @@ function createSchoolSim(opts = {}) {
         results: game.results, banner: game.banner, quizCd: Math.max(0, Math.ceil(game.quizCd)),
         topic: game.topic, topicName: game.topic && TOPICS[game.topic].name, board: game.topic && TOPICS[game.topic].board,
         teacher: serializeEntity(game.teacher), students: game.students.map(serializeEntity),
-        balls: game.balls.map(b => ({ x: r1(b.x), y: r1(b.y) })),
+        balls: game.balls.map(b => ({ x: r1(b.x), y: r1(b.y), life: r1(b.life) })),
         notes: game.notes.map(n => { const a = byId(n.from), b = byId(n.to); return a && b ? { x1: a.x, y1: a.y, x2: b.x, y2: b.y, t: n.t / 1.5 } : null; }).filter(Boolean),
         quiz: q && { q: q.q, options: q.options, t: Math.max(0, Math.ceil(q.t)), answer: q.reveal > 0 ? q.answer : -1, answers: q.answers },
         ask: a && { q: a.q, options: a.options, phase: a.phase, t: Math.max(0, Math.ceil(a.t)), called: a.called, pick: a.pick, answer: a.phase === 'result' ? a.answer : -1 },
@@ -912,6 +1004,7 @@ function createSchoolSim(opts = {}) {
       case 'input': {
         const i = p.input;
         i.up = !!m.up; i.down = !!m.down; i.left = !!m.left; i.right = !!m.right; i.phone = !!m.phone;
+        i.mx = Number.isFinite(m.mx) ? clamp(m.mx, -1, 1) : null; i.my = Number.isFinite(m.my) ? clamp(m.my, -1, 1) : null;
         if (Number.isFinite(m.aim)) i.aim = m.aim;
         return;
       }
