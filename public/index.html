@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Detention!</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div id="join" class="screen">
+    <div class="card">
+      <h1>Detention!</h1>
+      <p class="sub">A LAN school game. Be the teacher, or be the kid who never gets caught.</p>
+      <input id="name" maxlength="16" placeholder="Your name" autocomplete="off">
+      <button id="joinBtn">Join class</button>
+      <p id="joinMsg" class="msg"></p>
+    </div>
+  </div>
+
+  <div id="lobby" class="screen hidden">
+    <div class="card wide">
+      <h1>Classroom lobby</h1>
+      <p id="lanInfo" class="sub"></p>
+      <ul id="playerList"></ul>
+      <p id="roleHint"></p>
+      <div id="roleBtns" class="row">
+        <button data-role="teacher">🍎 Teacher</button>
+        <button data-role="student">🎒 Student</button>
+      </div>
+      <button id="startBtn" class="primary">Ring the bell (start)</button>
+      <p class="tiny">Max 3 players. NPC students (and an NPC teacher if nobody picks it) fill the rest of the class.</p>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="hudLeft"></div>
+    <div id="orderWrap"><span>Class order</span><div id="orderBar"><div id="orderFill"></div></div></div>
+    <div id="hudRight"></div>
+  </div>
+  <div id="help" class="hidden"></div>
+  <div id="quiz" class="hidden"></div>
+  <div id="banner" class="hidden"></div>
+  <div id="toast"></div>
+
+  <script src="client.js"></script>
+</body>
+</html>
