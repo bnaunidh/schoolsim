@@ -12,7 +12,7 @@ const VIEW_RANGE = 300, VIEW_HALF = Math.PI * 0.3;
 const $ = id => document.getElementById(id);
 const canvas = $('c'), ctx = canvas.getContext('2d');
 
-let ws = null, myId = null, state = null, lanUrls = [], lines = null;
+let net = null, myId = null, state = null, lanUrls = [], lines = null, room = null;
 let talkOpen = false, talkCat = null, teacherTarget = null;
 const smooth = new Map(); // entity id -> displayed {x,y}
 const floaters = [];
@@ -21,31 +21,103 @@ let mouse = { x: 0, y: 0 };
 let view = { s: 1, ox: 0, oy: 0 };
 
 // ---- Connection ---------------------------------------------------------
-function connect(name) {
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name }));
-  ws.onmessage = ev => {
-    const m = JSON.parse(ev.data);
-    if (m.t === 'welcome') { myId = m.id; lanUrls = m.urls || []; lines = m.lines; }
-    else if (m.t === 'full') { $('joinMsg').textContent = 'The class is full (3 players max).'; myId = null; }
-    else if (m.t === 'toast') toast(m.text);
-    else if (m.t === 'state') onState(m);
-  };
-  ws.onclose = () => {
-    if (myId) { toast('Disconnected from server'); showScreen('join'); $('joinMsg').textContent = 'Lost connection. Rejoin?'; }
-    myId = null;
-  };
-}
-const send = m => ws && ws.readyState === 1 && ws.send(JSON.stringify(m));
+// Two ways to play: the Node LAN server (WebSocket), or peer-to-peer rooms (works on GitHub Pages),
+// where the host's browser runs the game (game.js) and friends connect with a room code.
+const PEER_PREFIX = 'schoolsim-room-';
+const PEER_OPTS = window.SCHOOLSIM_PEER || {}; // optional: point at your own PeerJS server
 
-$('joinBtn').onclick = () => {
+let lastMsgAt = 0;
+function onMessage(raw) {
+  const m = JSON.parse(raw);
+  lastMsgAt = Date.now();
+  if (m.t === 'welcome') { myId = m.id; lanUrls = m.urls || []; room = m.room || room; lines = m.lines; $('joinMsg').textContent = ''; }
+  else if (m.t === 'full') { $('joinMsg').textContent = 'The class is full (3 players max).'; myId = null; }
+  else if (m.t === 'toast') toast(m.text);
+  else if (m.t === 'state') onState(m);
+}
+function onDisconnect(why) {
+  if (myId) { toast(why || 'Disconnected'); showScreen('join'); $('joinMsg').textContent = (why || 'Lost connection') + '. Rejoin?'; }
+  myId = null; net = null;
+}
+const send = m => net && net.send(JSON.stringify(m));
+// WebRTC can take a long time to notice a host closing their tab, so treat silence as a disconnect
+setInterval(() => { if (net && myId && Date.now() - lastMsgAt > 5000) onDisconnect('Lost connection to the host'); }, 1000);
+
+function connectLan(name) {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name }));
+  ws.onmessage = ev => onMessage(ev.data);
+  ws.onclose = () => onDisconnect('Disconnected from server');
+  net = { send: d => ws.readyState === 1 && ws.send(d) };
+}
+
+function hostRoom(name) {
+  const code = Array.from({ length: 4 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random() * 24)]).join('');
+  $('joinMsg').textContent = 'Opening your classroom…';
+  const peer = new Peer(PEER_PREFIX + code, PEER_OPTS);
+  peer.on('error', err => {
+    if (err.type === 'unavailable-id') { peer.destroy(); return hostRoom(name); }
+    $('joinMsg').textContent = 'Could not host: ' + err.type;
+  });
+  peer.on('open', () => {
+    const sim = createSchoolSim({ room: code });
+    const me = sim.join({ send: onMessage, close() {} }, name);
+    net = { send: d => sim.handle(me, JSON.parse(d)) };
+    setInterval(sim.tick, 1000 / sim.TICK_HZ);
+    peer.on('connection', c => {
+      let p = null;
+      const conn = { send: d => { if (c.open) c.send(d); }, close: () => setTimeout(() => c.close(), 300) };
+      c.on('data', d => {
+        let m; try { m = JSON.parse(d); } catch { return; }
+        if (!m || typeof m !== 'object') return;
+        if (!p) { if (m.t === 'join') p = sim.join(conn, m.name); return; }
+        sim.handle(p, m);
+      });
+      c.on('close', () => { if (p) { sim.leave(p); p = null; } });
+    });
+    peer.on('disconnected', () => peer.reconnect());
+  });
+}
+
+function joinRoom(name, code) {
+  code = code.trim().toUpperCase();
+  if (code.length !== 4) { $('joinMsg').textContent = 'Enter the 4-letter class code.'; return; }
+  $('joinMsg').textContent = 'Finding class ' + code + '…';
+  const peer = new Peer(PEER_OPTS);
+  peer.on('error', err => {
+    $('joinMsg').textContent = err.type === 'peer-unavailable' ? `No class with code ${code}. Check the code with your host.` : 'Connection error: ' + err.type;
+  });
+  peer.on('open', () => {
+    const c = peer.connect(PEER_PREFIX + code, { reliable: true });
+    c.on('open', () => { c.send(JSON.stringify({ t: 'join', name })); room = code; });
+    c.on('data', onMessage);
+    c.on('close', () => { onDisconnect('The host left the class'); peer.destroy(); });
+    net = { send: d => { if (c.open) c.send(d); } };
+  });
+}
+
+function playerName() {
   const name = $('name').value.trim() || 'Player';
   try { localStorage.setItem('schoolsim-name', name); } catch {}
   $('joinMsg').textContent = '';
-  connect(name);
-};
-$('name').addEventListener('keydown', e => { if (e.key === 'Enter') $('joinBtn').click(); });
+  return name;
+}
+$('joinBtn').onclick = () => connectLan(playerName());
+$('hostBtn').onclick = () => { if (!net) hostRoom(playerName()); };
+$('codeBtn').onclick = () => { if (!net) joinRoom(playerName(), $('code').value); };
+$('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('codeBtn').click(); });
+$('name').addEventListener('keydown', e => { if (e.key === 'Enter') ($('joinBtn').classList.contains('hidden') ? $('hostBtn') : $('joinBtn')).click(); });
 try { $('name').value = localStorage.getItem('schoolsim-name') || ''; } catch {}
+const urlCode = new URLSearchParams(location.search).get('code');
+if (urlCode) $('code').value = urlCode.toUpperCase();
+
+// Served by the Node LAN server? Otherwise (GitHub Pages, any static host) use peer-to-peer rooms.
+(location.hostname.endsWith('github.io') ? Promise.resolve(null) : fetch('server-info').then(r => r.ok ? r.json() : null).catch(() => null)).then(info => {
+  const lan = info && info.mode === 'lan';
+  $('joinBtn').classList.toggle('hidden', !lan);
+  $('p2p').classList.toggle('hidden', lan);
+  if (!lan && typeof Peer === 'undefined') $('joinMsg').textContent = 'Could not load the multiplayer library — check your internet connection.';
+});
 
 document.querySelectorAll('#roleBtns button').forEach(b => b.onclick = () => send({ t: 'role', role: b.dataset.role }));
 $('startBtn').onclick = () => send({ t: 'start' });
@@ -92,9 +164,12 @@ function renderLobby() {
   const host = state.players.find(p => p.id === state.hostId);
   const mine = state.players.find(p => p.id === myId);
   const isHost = state.hostId === myId;
-  $('lanInfo').innerHTML = lanUrls.length
-    ? `Friends on the same Wi-Fi join at: <b>${lanUrls.join('</b> or <b>')}</b>`
-    : `Friends join at: <b>${location.host}</b>`;
+  const link = `${location.origin}${location.pathname}?code=${room}`;
+  $('lanInfo').innerHTML = room
+    ? `Class code: <b style="font-size:22px;letter-spacing:3px">${room}</b><br>Friends open <b>${esc(link)}</b>${isHostTab() ? '<br><i>Keep this tab open — your browser is running the class.</i>' : ''}`
+    : lanUrls.length
+      ? `Friends on the same Wi-Fi join at: <b>${lanUrls.join('</b> or <b>')}</b>`
+      : `Friends join at: <b>${location.host}</b>`;
   $('playerList').innerHTML = state.players.map(p =>
     `<li><span>${p.id === state.hostId ? '👑 ' : ''}${esc(p.name)}${p.id === myId ? ' (you)' : ''}</span><span>${p.role ? (p.role === 'teacher' ? '🍎 Teacher' : '🎒 Student') : '…choosing'}</span></li>`
   ).join('') + `<li style="opacity:.6"><span>${state.max - state.players.length} open seat(s)</span><span>NPCs fill the rest</span></li>`;
@@ -112,6 +187,8 @@ function renderLobby() {
   $('startBtn').classList.toggle('hidden', !isHost);
   $('startBtn').disabled = !(mine && mine.role);
 }
+
+function isHostTab() { return state && state.hostId === myId; }
 
 function renderHud() {
   const g = state.game, m = me();

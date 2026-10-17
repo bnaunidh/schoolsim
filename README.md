@@ -48,7 +48,20 @@ Earn the most points without getting caught.
 - Sitting quietly and answering questions earns grade points.
 - Students win a period if class order drops below 50, or instantly if it hits 0 (**CHAOS!**).
 
-## Running it on your LAN
+## Play in your browser (GitHub Pages)
+
+**https://bnaunidh.github.io/schoolsim/**
+
+1. One person clicks **Host a new class**. They get a 4-letter **class code** (and a link with the code in it).
+2. Friends open the same page, type the code and click **Join**. It works on the same Wi-Fi and usually over the internet too.
+3. The host is the first to join, so they choose teacher or student, then ring the bell.
+
+The host's browser runs the whole class, so **the host should keep the game tab open and in front**. If the host leaves, the class ends.
+Players connect directly to each other (WebRTC via [PeerJS](https://peerjs.com)); the public PeerJS server is only used to find each other.
+
+Every push to `main` republishes the site automatically (`.github/workflows/static.yml` deploys the `public/` folder).
+
+## Running your own LAN server (optional)
 
 You need [Node.js](https://nodejs.org) 18 or newer on **one** computer (the host).
 
